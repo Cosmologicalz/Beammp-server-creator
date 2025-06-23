@@ -1,0 +1,14 @@
+{
+  "version": "v0.3.0",
+  "install_folder_name": "NameMe",
+  "server_download_url": "https://github.com/BeamMP/BeamMP-Server/releases/latest/download/BeamMP-Server.exe",
+  "mod_source_folder": "D:\\Files\\Important\\AppData\\Games\\Beamng.drive\\0.36\\mods",
+  "base_install_path": ".",
+  "shortcut_name": "NameMe - Shortcut.lnk",
+  "files_to_check_and_move": [
+    "BeamMP-Server.exe",
+    "ServerConfig.toml"
+  ],
+  "debug_mode": true,
+  "debug_mod_source_folder": "debugfolders"
+}
