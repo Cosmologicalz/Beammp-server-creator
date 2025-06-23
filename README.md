@@ -1,5 +1,7 @@
 beam-server-installer.pyw
 
+this is not anything official, I was just bored and decided to make it.
+
 simple yet effective
 
 If you can't add mods into your server install, open the python file with some editor.
