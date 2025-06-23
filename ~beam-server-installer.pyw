@@ -13,8 +13,8 @@ try:
     WINDOWS_SHORTCUT_SUPPORT = True
 except ImportError:
     WINDOWS_SHORTCUT_SUPPORT = False
-    print("[WARNING] 'pywin32' not found. Shortcut creation will be skipped on non-Windows systems or if not installed.")
-
+    # Suppress print warning to avoid console output for .pyw file,
+    # as the GUI handles the user notification.
 
 # --- CONFIGURABLE VARIABLES ---
 # The name of the main installation folder
@@ -23,7 +23,7 @@ INSTALL_FOLDER_NAME = "NameMe"
 SERVER_DOWNLOAD_URL = "https://github.com/BeamMP/BeamMP-Server/releases/latest/download/BeamMP-Server.exe"
 # The full path to the source folder containing BeamNG.drive mods (ZIP files)
 # IMPORTANT: This path is Windows-specific. Adjust if on another OS or your path differs.
-MOD_SOURCE_FOLDER = r"D:\Files\Important\AppData\Games\Beamng.drive\0.36\mods"
+MOD_SOURCE_FOLDER = r"D:\Files\Important\AppData\Games\Beamng.drive\0.36\modwww"
 # Base path where the INSTALL_FOLDER_NAME will be created.
 # By default, it's the directory where this script is run.
 # Change this if you want to install it elsewhere (e.g., os.path.expanduser("~/Desktop"))
@@ -49,7 +49,32 @@ class BeamMPInstallerGUI(tk.Tk):
         self.full_install_path = os.path.join(BASE_INSTALL_PATH, INSTALL_FOLDER_NAME)
         self.client_mods_path = None # Will be set after directory creation
 
+        # Initialize mod folder existence flag and error message
+        self.mod_folder_exists = False
+        self.initial_mod_folder_error = None # To store error message if check fails early
+
+        # Check if the mod source folder exists and is accessible on startup
+        try:
+            if os.path.isdir(MOD_SOURCE_FOLDER):
+                self.mod_folder_exists = True
+            else:
+                # Path exists but is not a directory, or path does not exist
+                self.initial_mod_folder_error = f"Mod folder does not exist or is not a directory: '{MOD_SOURCE_FOLDER}'"
+        except Exception as e: # Catch any other exceptions (e.g., permission denied)
+            self.initial_mod_folder_error = f"Error accessing mod folder '{MOD_SOURCE_FOLDER}': {e}"
+
         self.create_widgets()
+
+        # Display initial error if any occurred during mod folder check
+        if self.initial_mod_folder_error:
+            messagebox.showerror(
+                "Startup Warning: Mod Folder Issue",
+                self.initial_mod_folder_error + "\n\nMod copying functionality will be disabled. "
+                "Please ensure the path is correct and the installer has permissions to access it."
+            )
+            # Also log this to the scrolled text
+            self.log_message(f"Warning: {self.initial_mod_folder_error}. Mod copying disabled.", 'error')
+
 
     def create_widgets(self):
         # Frame for controls
@@ -65,6 +90,16 @@ class BeamMPInstallerGUI(tk.Tk):
         self.is_modded_var = tk.BooleanVar(value=False)
         self.modded_checkbox = ttk.Checkbutton(control_frame, text="Is this a modded server?", variable=self.is_modded_var)
         self.modded_checkbox.grid(row=2, column=0, sticky="w", pady=(0, 15))
+
+        # Disable checkbox if mod folder doesn't exist or had an initial error
+        if not self.mod_folder_exists:
+            self.modded_checkbox.config(state='disabled')
+            # Bind a click event to show a warning when disabled
+            self.modded_checkbox.bind("<Button-1>", self._show_mod_folder_warning)
+            # Initial warning message already handled in __init__ if there was an error.
+            # If no error but just not a dir, log it here.
+            if not self.initial_mod_folder_error: 
+                self.log_message(f"Warning: Mod folder not found at '{MOD_SOURCE_FOLDER}'. Mod copying will be disabled.", 'warning')
 
         # Install Button
         self.install_button = ttk.Button(control_frame, text="Start Installation", command=self.start_installation)
@@ -90,6 +125,22 @@ class BeamMPInstallerGUI(tk.Tk):
         self.log_text.tag_config('error', foreground='red')
         self.log_text.tag_config('success', foreground='green')
         self.log_text.tag_config('warning', foreground='orange')
+
+    def _show_mod_folder_warning(self, event=None):
+        """Shows a warning message if the mod folder doesn't exist or couldn't be accessed."""
+        error_detail_message = ""
+        if self.initial_mod_folder_error:
+            error_detail_message = f"\n\nDetails: {self.initial_mod_folder_error}"
+
+        messagebox.showwarning(
+            "Mod Folder Not Found / Accessible",
+            f"The specified mod folder does not exist or could not be accessed:\n'{MOD_SOURCE_FOLDER}'{error_detail_message}\n\n"
+            "Please ensure BeamNG.drive is installed, the folder path is correct, "
+            "and that the installer has necessary permissions to read this directory. "
+            "Then, restart the installer."
+        )
+        # Prevent the checkbox state from changing if it was disabled
+        return "break" # Prevents default event handling for Tkinter widgets
 
     def log_message(self, message, message_type='info'):
         """Inserts a message into the scrolled text widget."""
@@ -133,41 +184,54 @@ class BeamMPInstallerGUI(tk.Tk):
             self.log_message("Installation aborted due to download error.", 'error')
             self._installation_complete(False)
             return
-        self.update_progress(50, "Download complete.")
+        self.update_progress(45, "Download complete.") # Adjusted progress
 
         # 3. Open the downloaded .exe file
         self.log_message(f"Launching {server_exe_name}...", 'info')
-        self.update_progress(55, "Launching server executable...")
+        self.update_progress(50, "Launching server executable...") # Adjusted progress
         if not self._execute_exe(server_exe_destination):
             self.log_message("Could not launch the server executable, but proceeding with other steps if possible.", 'warning')
 
-        # 4. Copy mods if selected
-        if self.is_modded_var.get():
+        # 4. Copy mods if selected and mod folder exists
+        # Ensure that self.mod_folder_exists is true before attempting to copy
+        if self.is_modded_var.get() and self.mod_folder_exists:
             self.log_message("Modded server option selected. Copying mods...", 'info')
-            self.update_progress(60, "Copying mods...")
+            self.update_progress(55, "Copying mods...") # Adjusted progress
             self._copy_zip_files(MOD_SOURCE_FOLDER, self.client_mods_path)
-            self.update_progress(85, "Mods copied.")
+            self.update_progress(75, "Mods copied.") # Adjusted progress
         else:
-            self.log_message("Modded server option not selected. Skipping mod copying.", 'info')
-            self.update_progress(85, "Skipping mod copying.") # Still update progress
+            self.log_message("Modded server option not selected or mod folder missing/inaccessible. Skipping mod copying.", 'info')
+            self.update_progress(75, "Skipping mod copying.") # Still update progress
 
         # 5. Create shortcut
         self.log_message("Creating shortcut...", 'info')
-        self.update_progress(90, "Creating shortcut...")
-        self._create_shortcut(server_exe_destination, BASE_INSTALL_PATH, SHORTCUT_NAME) # Shortcut in BASE_INSTALL_PATH
+        self.update_progress(80, "Creating shortcut...") # Adjusted progress
+        # Shortcut will be created in BASE_INSTALL_PATH, not the NameMe folder
+        shortcut_path = os.path.join(BASE_INSTALL_PATH, SHORTCUT_NAME)
+        self._create_shortcut(server_exe_destination, BASE_INSTALL_PATH, SHORTCUT_NAME) 
 
-        # 6. Delay and move existing files (LAST STEP)
+        # 6. Delay and move existing files (LAST STEP before verification)
         self.log_message("Waiting 1 second before moving existing files...", 'info')
-        self.update_progress(92, "Preparing to move existing files...")
+        self.update_progress(85, "Preparing to move existing files...") # Adjusted progress
         time.sleep(1) # Wait for 1 second
 
         self.log_message("Moving existing server files...", 'info')
         # Explicitly get the directory of the currently running script
         script_dir = os.path.dirname(os.path.abspath(__file__))
         self._check_and_move_existing_files(script_dir, self.full_install_path)
-        self.update_progress(98, "Existing files moved.")
+        self.update_progress(90, "Existing files moved.") # Adjusted progress
 
-        self._installation_complete(True)
+        # 7. Post-installation verification (NEW STEP)
+        self.log_message("Verifying installed files...", 'info')
+        self.update_progress(95, "Verifying installation...")
+        verification_success = self._verify_installation_files(
+            self.full_install_path, 
+            server_exe_destination, 
+            shortcut_path
+        )
+        self.update_progress(99, "Verification complete.")
+
+        self._installation_complete(verification_success)
 
     def _create_directories(self, base_path, folder_name):
         """Creates the main installation directory and subdirectories."""
@@ -218,9 +282,9 @@ class BeamMPInstallerGUI(tk.Tk):
                 for chunk in response.iter_content(chunk_size=8192):
                     f.write(chunk)
                     bytes_downloaded += len(chunk)
-                    # Update download progress relative to this step's progress (10% to 50%)
+                    # Update download progress relative to this step's progress (10% to 45%)
                     if total_size > 0:
-                        download_progress_percentage = (bytes_downloaded / total_size) * (50 - 10)
+                        download_progress_percentage = (bytes_downloaded / total_size) * (45 - 10)
                         self.update_progress(10 + download_progress_percentage, f"Downloading: {bytes_downloaded}/{total_size} bytes")
 
             self.log_message(f"Downloaded successfully to: {destination_path}", 'success')
@@ -249,14 +313,22 @@ class BeamMPInstallerGUI(tk.Tk):
 
     def _copy_zip_files(self, source_folder, destination_folder):
         """Copies all .zip files from a source to a destination folder."""
+        # This check is technically redundant due to self.mod_folder_exists check earlier,
+        # but kept for robustness within the function itself.
         if not os.path.isdir(source_folder):
             self.log_message(f"Mod source folder not found: {source_folder}", 'error')
-            return False
+            return False 
 
         copied_count = 0
         self.log_message(f"Searching for .zip files in: {source_folder}")
         
-        zip_files = [f for f in os.listdir(source_folder) if os.path.isfile(os.path.join(source_folder, f)) and f.lower().endswith(".zip")]
+        try:
+            zip_files = [f for f in os.listdir(source_folder) if os.path.isfile(os.path.join(source_folder, f)) and f.lower().endswith(".zip")]
+        except Exception as e:
+            self.log_message(f"Error listing files in mod source folder '{source_folder}': {e}", 'error')
+            self.log_message("Mod copying failed due to folder access issue.", 'error')
+            return False
+
         total_zip_files = len(zip_files)
 
         for i, item_name in enumerate(zip_files):
@@ -265,9 +337,9 @@ class BeamMPInstallerGUI(tk.Tk):
                 shutil.copy2(source_item_path, destination_folder)
                 self.log_message(f"Copied: {item_name}")
                 copied_count += 1
-                # Update progress for mod copying (60% to 85%)
-                copy_progress_percentage = (i + 1) / total_zip_files * (85 - 60) if total_zip_files > 0 else 0
-                self.update_progress(60 + copy_progress_percentage, f"Copying mods: {copied_count}/{total_zip_files}")
+                # Update progress for mod copying (55% to 75%)
+                copy_progress_percentage = (i + 1) / total_zip_files * (75 - 55) if total_zip_files > 0 else 0
+                self.update_progress(55 + copy_progress_percentage, f"Copying mods: {copied_count}/{total_zip_files}")
             except Exception as e:
                 self.log_message(f"Error copying {item_name}: {e}", 'error')
         
@@ -298,8 +370,64 @@ class BeamMPInstallerGUI(tk.Tk):
             self.log_message("Shortcut creation is only supported on Windows with 'pywin32' installed. Skipping.", 'warning')
             return False
 
+    def _verify_installation_files(self, full_install_path, server_exe_destination, shortcut_path):
+        """Verifies the presence of key installed files and folders."""
+        overall_success = True
+        self.log_message("--- Verifying Installation ---", 'info')
+
+        # Check main folder
+        if os.path.isdir(full_install_path):
+            self.log_message(f"'{INSTALL_FOLDER_NAME}' folder exists.", 'success')
+        else:
+            self.log_message(f"Error: '{INSTALL_FOLDER_NAME}' folder NOT found.", 'error')
+            overall_success = False
+
+        # Check Resources folder
+        resources_path = os.path.join(full_install_path, "Resources")
+        if os.path.isdir(resources_path):
+            self.log_message(f"'{os.path.basename(resources_path)}' folder exists.", 'success')
+        else:
+            self.log_message(f"Error: '{os.path.basename(resources_path)}' folder NOT found.", 'error')
+            overall_success = False
+
+        # Check Client folder
+        client_path = os.path.join(resources_path, "Client")
+        if os.path.isdir(client_path):
+            self.log_message(f"'{os.path.basename(client_path)}' folder exists.", 'success')
+        else:
+            self.log_message(f"Error: '{os.path.basename(client_path)}' folder NOT found.", 'error')
+            overall_success = False
+
+        # Check BeamMP-Server.exe
+        if os.path.exists(server_exe_destination):
+            self.log_message(f"'{os.path.basename(server_exe_destination)}' executable exists.", 'success')
+        else:
+            self.log_message(f"Error: '{os.path.basename(server_exe_destination)}' executable NOT found.", 'error')
+            overall_success = False
+
+        # Check ServerConfig.toml (if it was one of the files to check/move)
+        server_config_name = "ServerConfig.toml"
+        if server_config_name in FILES_TO_CHECK_AND_MOVE:
+            toml_path = os.path.join(full_install_path, server_config_name)
+            if os.path.exists(toml_path):
+                self.log_message(f"'{server_config_name}' file exists.", 'success')
+            else:
+                self.log_message(f"Warning: '{server_config_name}' file NOT found (might not have been present in source or moved).", 'warning')
+        else:
+            self.log_message(f"Note: '{server_config_name}' was not configured for specific verification.", 'info')
+
+        # Check shortcut
+        if os.path.exists(shortcut_path):
+            self.log_message(f"Shortcut '{os.path.basename(shortcut_path)}' exists.", 'success')
+        else:
+            self.log_message(f"Error: Shortcut '{os.path.basename(shortcut_path)}' NOT found.", 'error')
+            overall_success = False
+        
+        self.log_message("--- Verification Complete ---", 'info')
+        return overall_success
+
     def _installation_complete(self, success):
-        """Finalizes the installation process."""
+        """Finalizes the installation process and handles auto-closing."""
         self.install_button.config(state='normal', text="Start Installation")
         self.modded_checkbox.config(state='normal')
         self.update_progress(100, "Installation Complete!")
@@ -308,8 +436,14 @@ class BeamMPInstallerGUI(tk.Tk):
             self.log_message("\nInstallation process completed successfully!", 'success')
             messagebox.showinfo("Installation Complete", "BeamMP Server installation finished successfully!")
         else:
-            self.log_message("\nInstallation process encountered errors.", 'error')
+            self.log_message("\nInstallation process encountered errors. Please check the log for details.", 'error')
             messagebox.showerror("Installation Error", "BeamMP Server installation encountered errors. Please check the log.")
+
+        # Auto-close after 1 second
+        self.log_message("Installer will close in 1 second...", 'info')
+        self.update_idletasks() # Ensure message appears before delay
+        time.sleep(1)
+        self.destroy() # Close the Tkinter window
 
 
 if __name__ == "__main__":
