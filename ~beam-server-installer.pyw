@@ -18,14 +18,14 @@ except ImportError:
 
 # --- CONFIGURABLE VARIABLES ---
 # Current version of the installer
-VERSION = "v0.2.1" # Incrementing version for bug fix and enhancements
+VERSION = "v0.2.2" # Incrementing version for size display feature
 # The name of the main installation folder
 INSTALL_FOLDER_NAME = "NameMe"
 # URL to download the BeamMP Server executable
 SERVER_DOWNLOAD_URL = "https://github.com/BeamMP/BeamMP-Server/releases/latest/download/BeamMP-Server.exe"
 # The full path to the source folder containing BeamNG.drive mods (ZIP files)
 # IMPORTANT: This path is Windows-specific. Adjust if on another OS or your path differs.
-MOD_SOURCE_FOLDER = r"D:\Files\Important\AppData\Games\Beamng.drive\0.36\mods"
+MOD_SOURCE_FOLDER = r"D:\Files\Important\AppData\Games\Beamng.drive\0.36\mods\repo"
 # Base path where the INSTALL_FOLDER_NAME will be created.
 # By default, it's the directory where this script is run.
 # Change this if you want to install it elsewhere (e.g., os.path.expanduser("~/Desktop"))
@@ -35,6 +35,17 @@ SHORTCUT_NAME = f"{INSTALL_FOLDER_NAME} - Shortcut.lnk" # .lnk is for Windows
 # List of files to check for and move if found in the script's directory
 FILES_TO_CHECK_AND_MOVE = ["BeamMP-Server.exe", "ServerConfig.toml"]
 # --- END CONFIGURABLE VARIABLES ---
+
+def get_human_readable_size(size_bytes):
+    """Converts a size in bytes to a human-readable format (B, KB, MB, GB)."""
+    if size_bytes < 1024:
+        return f"{size_bytes} Bytes"
+    elif size_bytes < 1024**2:
+        return f"{size_bytes / 1024:.2f} KB"
+    elif size_bytes < 1024**3:
+        return f"{size_bytes / (1024**2):.2f} MB"
+    else:
+        return f"{size_bytes / (1024**3):.2f} GB"
 
 
 class BeamMPInstallerGUI(tk.Tk):
@@ -200,7 +211,8 @@ class BeamMPInstallerGUI(tk.Tk):
             self.log_message("Modded server option selected. Copying files from mod folder...", 'info')
             self.update_progress(55, "Copying mod files...") # Adjusted progress
             # Changed to copy all files, not just .zip
-            self._copy_all_files_from_folder(MOD_SOURCE_FOLDER, self.client_mods_path) 
+            total_copied_size = self._copy_all_files_from_folder(MOD_SOURCE_FOLDER, self.client_mods_path) 
+            self.log_message(f"Data size of mods successfully installed: {get_human_readable_size(total_copied_size)}", 'success') # NEW: Display size
             self.update_progress(75, "Mod files copied.") # Adjusted progress
         else:
             self.log_message("Modded server option not selected or mod folder missing/inaccessible. Skipping mod copying.", 'info')
@@ -315,14 +327,15 @@ class BeamMPInstallerGUI(tk.Tk):
             return False
 
     def _copy_all_files_from_folder(self, source_folder, destination_folder):
-        """Copies all files from a source to a destination folder."""
+        """Copies all files from a source to a destination folder and returns their total size."""
         # This check is technically redundant due to self.mod_folder_exists check earlier,
         # but kept for robustness within the function itself.
         if not os.path.isdir(source_folder):
             self.log_message(f"Source folder not found for copying files: {source_folder}", 'error')
-            return False 
+            return 0 # Return 0 size if source folder doesn't exist or is not a directory
 
         copied_count = 0
+        total_copied_size = 0 # Initialize total size
         self.log_message(f"Searching for files in: {source_folder}")
         
         try:
@@ -331,7 +344,7 @@ class BeamMPInstallerGUI(tk.Tk):
         except Exception as e:
             self.log_message(f"Error listing files in source folder '{source_folder}': {e}", 'error')
             self.log_message("File copying failed due to folder access issue.", 'error')
-            return False
+            return 0 # Return 0 size on error
 
         total_files = len(files_to_copy)
 
@@ -339,7 +352,9 @@ class BeamMPInstallerGUI(tk.Tk):
             source_item_path = os.path.join(source_folder, item_name)
             try:
                 shutil.copy2(source_item_path, destination_folder)
-                self.log_message(f"Copied: {item_name}", 'success') # Added success tag for clarity
+                file_size = os.path.getsize(source_item_path) # Get size of copied file
+                total_copied_size += file_size # Add to total
+                self.log_message(f"Copied: {item_name} ({get_human_readable_size(file_size)})", 'success') # Added size to log
                 copied_count += 1
                 # Update progress for mod copying (55% to 75%)
                 copy_progress_percentage = (i + 1) / total_files * (75 - 55) if total_files > 0 else 0
@@ -351,7 +366,8 @@ class BeamMPInstallerGUI(tk.Tk):
             self.log_message(f"Successfully copied {copied_count} file(s) to: {destination_folder}", 'success')
         else:
             self.log_message("No files found to copy or an error occurred during copying.", 'info')
-        return True
+        
+        return total_copied_size # Return the total size
 
     def _create_shortcut(self, target_path, shortcut_dir, shortcut_name):
         """Creates a shortcut to the target_path in the shortcut_dir."""
