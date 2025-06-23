@@ -9,6 +9,6 @@
     "BeamMP-Server.exe",
     "ServerConfig.toml"
   ],
-  "debug_mode": true,
-  "debug_mod_source_folder": "debugfolders"
+  "debug_mode": false,
+  "debug_mod_source_folder": "Enter your debug folder in the json HERE"
 }
