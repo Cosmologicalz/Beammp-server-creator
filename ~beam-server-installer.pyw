@@ -6,6 +6,10 @@ import sys
 import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext
 import time # Import the time module for delays
+import webbrowser
+import random
+import string
+
 
 # Conditional import for pywin32 (Windows-specific for shortcuts)
 try:
@@ -15,6 +19,17 @@ except ImportError:
     WINDOWS_SHORTCUT_SUPPORT = False
     # Suppress print warning to avoid console output for .pyw file,
     # as the GUI handles the user notification.
+
+def generate_random_code():
+    """
+    Generates a random 10-character code consisting of digits and letters.
+    """
+    characters = string.digits + string.ascii_letters
+    random_code = ''.join(random.choices(characters, k=10))
+    return random_code
+
+# Generate the random code once to be used for both shortcut and text file
+GLOBAL_SHORTCUT_CODE = generate_random_code()
 
 # --- CONFIGURABLE VARIABLES ---
 # Current version of the installer
@@ -31,8 +46,8 @@ DEBUG = False
 # By default, it's the directory where this script is run.
 # Change this if you want to install it elsewhere (e.g., os.path.expanduser("~/Desktop"))
 BASE_INSTALL_PATH = os.getcwd() # Installer will create NameMe inside this base path
-# Name for the shortcut file
-SHORTCUT_NAME = f"{INSTALL_FOLDER_NAME} - Shortcut.lnk" # .lnk is for Windows
+# Name for the shortcut file, now using the globally generated code
+SHORTCUT_NAME = f"{INSTALL_FOLDER_NAME} - DO NOT DELETE CODE [{GLOBAL_SHORTCUT_CODE}] .lnk" # .lnk is for Windows
 # List of files to check for and move if found in the script's directory
 FILES_TO_CHECK_AND_MOVE = ["BeamMP-Server.exe", "ServerConfig.toml"]
 # --- END CONFIGURABLE VARIABLES ---
@@ -50,7 +65,6 @@ def get_human_readable_size(size_bytes):
         return f"{size_bytes / (1024**2):.2f} MB"
     else:
         return f"{size_bytes / (1024**3):.2f} GB"
-
 
 class BeamMPInstallerGUI(tk.Tk):
     def __init__(self):
@@ -172,7 +186,7 @@ class BeamMPInstallerGUI(tk.Tk):
         self.progress_bar['value'] = value
         self.progress_label.config(text=status_text)
         self.update_idletasks()
-
+    
     def start_installation(self):
         # Disable controls and clear log
         self.install_button.config(state='disabled', text="Installing...")
@@ -191,6 +205,12 @@ class BeamMPInstallerGUI(tk.Tk):
             self.log_message("Installation aborted due to directory creation error.", 'error')
             self._installation_complete(False)
             return
+
+        # NEW: Create bsi_code.txt file
+        self.log_message("Creating bsi_code.txt file...", 'info')
+        self.update_progress(7, "Creating code file...")
+        self._create_bsi_code_file(self.full_install_path, GLOBAL_SHORTCUT_CODE)
+        self.update_progress(9, "Code file created.")
 
         # 2. Download BeamMP-Server.exe
         server_exe_name = os.path.basename(SERVER_DOWNLOAD_URL)
@@ -265,6 +285,18 @@ class BeamMPInstallerGUI(tk.Tk):
         except OSError as e:
             self.log_message(f"Error creating directories: {e}", 'error')
             return None, None
+            
+    def _create_bsi_code_file(self, install_path, code):
+        """Creates a bsi_code.txt file with the generated code."""
+        file_path = os.path.join(install_path, "bsi_code.txt")
+        try:
+            with open(file_path, 'w') as f:
+                f.write(f"generated_bsi_shortcut_code = {code}\n")
+            self.log_message(f"Created '{os.path.basename(file_path)}' successfully at '{install_path}'", 'success')
+            return True
+        except IOError as e:
+            self.log_message(f"Error creating bsi_code.txt: {e}", 'error')
+            return False
 
     def _check_and_move_existing_files(self, source_dir, destination_dir):
         """Checks for specific files in source_dir and moves them to destination_dir."""
@@ -447,6 +479,24 @@ class BeamMPInstallerGUI(tk.Tk):
             self.log_message(f"Error: Shortcut '{os.path.basename(shortcut_path)}' NOT found.", 'error')
             overall_success = False
         
+        # Check bsi_code.txt file (NEW VERIFICATION)
+        bsi_code_file_path = os.path.join(full_install_path, "bsi_code.txt")
+        if os.path.exists(bsi_code_file_path):
+            self.log_message(f"'bsi_code.txt' file exists.", 'success')
+            try:
+                with open(bsi_code_file_path, 'r') as f:
+                    content = f.read().strip()
+                expected_content = f"generated_bsi_shortcut_code = {GLOBAL_SHORTCUT_CODE}"
+                if content == expected_content:
+                    self.log_message(f"'bsi_code.txt' content matches expected code.", 'success')
+                else:
+                    self.log_message(f"Warning: 'bsi_code.txt' content mismatch. Expected: '{expected_content}', Found: '{content}'.", 'warning')
+            except Exception as e:
+                self.log_message(f"Error reading 'bsi_code.txt': {e}", 'error')
+        else:
+            self.log_message(f"Error: 'bsi_code.txt' file NOT found.", 'error')
+            overall_success = False
+            
         self.log_message("--- Verification Complete ---", 'info')
         return overall_success
 
