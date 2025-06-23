@@ -17,13 +17,15 @@ except ImportError:
     # as the GUI handles the user notification.
 
 # --- CONFIGURABLE VARIABLES ---
+# Current version of the installer
+VERSION = "v0.2.1" # Incrementing version for bug fix and enhancements
 # The name of the main installation folder
 INSTALL_FOLDER_NAME = "NameMe"
 # URL to download the BeamMP Server executable
 SERVER_DOWNLOAD_URL = "https://github.com/BeamMP/BeamMP-Server/releases/latest/download/BeamMP-Server.exe"
 # The full path to the source folder containing BeamNG.drive mods (ZIP files)
 # IMPORTANT: This path is Windows-specific. Adjust if on another OS or your path differs.
-MOD_SOURCE_FOLDER = r"D:\Files\Important\AppData\Games\Beamng.drive\0.36\modwww"
+MOD_SOURCE_FOLDER = r"D:\Files\Important\AppData\Games\Beamng.drive\0.36\mods"
 # Base path where the INSTALL_FOLDER_NAME will be created.
 # By default, it's the directory where this script is run.
 # Change this if you want to install it elsewhere (e.g., os.path.expanduser("~/Desktop"))
@@ -38,7 +40,7 @@ FILES_TO_CHECK_AND_MOVE = ["BeamMP-Server.exe", "ServerConfig.toml"]
 class BeamMPInstallerGUI(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("BeamMP Server Installer")
+        self.title(f"BeamMP Server Installer {VERSION}") # Display version in title
         self.geometry("600x550") # Increased height for progress bar
         self.resizable(False, False)
 
@@ -195,10 +197,11 @@ class BeamMPInstallerGUI(tk.Tk):
         # 4. Copy mods if selected and mod folder exists
         # Ensure that self.mod_folder_exists is true before attempting to copy
         if self.is_modded_var.get() and self.mod_folder_exists:
-            self.log_message("Modded server option selected. Copying mods...", 'info')
-            self.update_progress(55, "Copying mods...") # Adjusted progress
-            self._copy_zip_files(MOD_SOURCE_FOLDER, self.client_mods_path)
-            self.update_progress(75, "Mods copied.") # Adjusted progress
+            self.log_message("Modded server option selected. Copying files from mod folder...", 'info')
+            self.update_progress(55, "Copying mod files...") # Adjusted progress
+            # Changed to copy all files, not just .zip
+            self._copy_all_files_from_folder(MOD_SOURCE_FOLDER, self.client_mods_path) 
+            self.update_progress(75, "Mod files copied.") # Adjusted progress
         else:
             self.log_message("Modded server option not selected or mod folder missing/inaccessible. Skipping mod copying.", 'info')
             self.update_progress(75, "Skipping mod copying.") # Still update progress
@@ -311,42 +314,43 @@ class BeamMPInstallerGUI(tk.Tk):
             self.log_message("Please ensure the file is executable and you have permissions.", 'error')
             return False
 
-    def _copy_zip_files(self, source_folder, destination_folder):
-        """Copies all .zip files from a source to a destination folder."""
+    def _copy_all_files_from_folder(self, source_folder, destination_folder):
+        """Copies all files from a source to a destination folder."""
         # This check is technically redundant due to self.mod_folder_exists check earlier,
         # but kept for robustness within the function itself.
         if not os.path.isdir(source_folder):
-            self.log_message(f"Mod source folder not found: {source_folder}", 'error')
+            self.log_message(f"Source folder not found for copying files: {source_folder}", 'error')
             return False 
 
         copied_count = 0
-        self.log_message(f"Searching for .zip files in: {source_folder}")
+        self.log_message(f"Searching for files in: {source_folder}")
         
         try:
-            zip_files = [f for f in os.listdir(source_folder) if os.path.isfile(os.path.join(source_folder, f)) and f.lower().endswith(".zip")]
+            # Get a list of all files (not directories) in the source folder
+            files_to_copy = [f for f in os.listdir(source_folder) if os.path.isfile(os.path.join(source_folder, f))]
         except Exception as e:
-            self.log_message(f"Error listing files in mod source folder '{source_folder}': {e}", 'error')
-            self.log_message("Mod copying failed due to folder access issue.", 'error')
+            self.log_message(f"Error listing files in source folder '{source_folder}': {e}", 'error')
+            self.log_message("File copying failed due to folder access issue.", 'error')
             return False
 
-        total_zip_files = len(zip_files)
+        total_files = len(files_to_copy)
 
-        for i, item_name in enumerate(zip_files):
+        for i, item_name in enumerate(files_to_copy):
             source_item_path = os.path.join(source_folder, item_name)
             try:
                 shutil.copy2(source_item_path, destination_folder)
-                self.log_message(f"Copied: {item_name}")
+                self.log_message(f"Copied: {item_name}", 'success') # Added success tag for clarity
                 copied_count += 1
                 # Update progress for mod copying (55% to 75%)
-                copy_progress_percentage = (i + 1) / total_zip_files * (75 - 55) if total_zip_files > 0 else 0
-                self.update_progress(55 + copy_progress_percentage, f"Copying mods: {copied_count}/{total_zip_files}")
+                copy_progress_percentage = (i + 1) / total_files * (75 - 55) if total_files > 0 else 0
+                self.update_progress(55 + copy_progress_percentage, f"Copying files: {copied_count}/{total_files}")
             except Exception as e:
                 self.log_message(f"Error copying {item_name}: {e}", 'error')
         
         if copied_count > 0:
-            self.log_message(f"Successfully copied {copied_count} mod(s) to: {destination_folder}", 'success')
+            self.log_message(f"Successfully copied {copied_count} file(s) to: {destination_folder}", 'success')
         else:
-            self.log_message("No .zip files found to copy or an error occurred during copying.", 'info')
+            self.log_message("No files found to copy or an error occurred during copying.", 'info')
         return True
 
     def _create_shortcut(self, target_path, shortcut_dir, shortcut_name):
