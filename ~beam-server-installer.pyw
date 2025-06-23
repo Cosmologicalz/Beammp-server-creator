@@ -4,9 +4,8 @@ import shutil
 import subprocess
 import sys
 import tkinter as tk
-from tkinter import ttk, scrolledtext, messagebox
+from tkinter import ttk, messagebox, scrolledtext
 import time # Import the time module for delays
-import json # Import json for reading config file
 
 # Conditional import for pywin32 (Windows-specific for shortcuts)
 try:
@@ -14,77 +13,32 @@ try:
     WINDOWS_SHORTCUT_SUPPORT = True
 except ImportError:
     WINDOWS_SHORTCUT_SUPPORT = False
-    # Suppress print warning as GUI will handle notifications
+    # Suppress print warning to avoid console output for .pyw file,
+    # as the GUI handles the user notification.
 
+# --- CONFIGURABLE VARIABLES ---
+# Current version of the installer
+VERSION = "v0.2.3" # Incrementing version for size display feature
+# The name of the main installation folder
+INSTALL_FOLDER_NAME = "NameMe"
+# URL to download the BeamMP Server executable
+SERVER_DOWNLOAD_URL = "https://github.com/BeamMP/BeamMP-Server/releases/latest/download/BeamMP-Server.exe"
+# The full path to the source folder containing BeamNG.drive mods (ZIP files)
+# IMPORTANT: This path is Windows-specific. Adjust if on another OS or your path differs.
+MOD_SOURCE_FOLDER = r"D:\Files\Important\AppData\Games\Beamng.drive\0.36\mods\repo"
+DEBUG = False
+# Base path where the INSTALL_FOLDER_NAME will be created.
+# By default, it's the directory where this script is run.
+# Change this if you want to install it elsewhere (e.g., os.path.expanduser("~/Desktop"))
+BASE_INSTALL_PATH = os.getcwd() # Installer will create NameMe inside this base path
+# Name for the shortcut file
+SHORTCUT_NAME = f"{INSTALL_FOLDER_NAME} - Shortcut.lnk" # .lnk is for Windows
+# List of files to check for and move if found in the script's directory
+FILES_TO_CHECK_AND_MOVE = ["BeamMP-Server.exe", "ServerConfig.toml"]
+# --- END CONFIGURABLE VARIABLES ---
 
-# --- CONFIGURATION LOADING ---
-CONFIG_FILE = "data/data.json"
-CONFIG = {}
-
-def load_config():
-    """Loads configuration from data/data.json."""
-    global CONFIG
-    config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), CONFIG_FILE)
-    try:
-        with open(config_path, 'r') as f:
-            CONFIG = json.load(f)
-        
-        # Validate essential config keys
-        required_keys = [
-            "version", "install_folder_name", "server_download_url", 
-            "mod_source_folder", "base_install_path", "shortcut_name",
-            "files_to_check_and_move", "debug_mode", "debug_mod_source_folder"
-        ]
-        for key in required_keys:
-            if key not in CONFIG:
-                raise KeyError(f"Missing required configuration key: '{key}' in {CONFIG_FILE}")
-
-        # Handle base_install_path specifically, resolve '.' to script directory
-        if CONFIG.get("base_install_path") == ".":
-            CONFIG["base_install_path"] = os.path.dirname(os.path.abspath(__file__))
-
-        return True
-    except FileNotFoundError:
-        print(f"Error: Configuration file '{CONFIG_FILE}' not found at '{config_path}'. Please create it.")
-        return False
-    except json.JSONDecodeError as e:
-        print(f"Error: Invalid JSON in '{CONFIG_FILE}': {e}")
-        return False
-    except KeyError as e:
-        print(f"Error: {e}")
-        return False
-    except Exception as e:
-        print(f"An unexpected error occurred loading config: {e}")
-        return False
-
-# Load configuration at startup
-if not load_config():
-    # If config loading fails, we can't proceed.
-    # Display a basic error and exit or prevent GUI creation.
-    # For a pyw, we use a simple message box then exit.
-    tk.Tk().withdraw() # Hide the main window
-    messagebox.showerror(
-        "Configuration Error",
-        "Failed to load installer configuration. Please ensure 'data/data.json' exists and is valid."
-    )
-    sys.exit(1)
-
-
-# Assign loaded configurations to variables for easier access
-VERSION = CONFIG.get("version")
-INSTALL_FOLDER_NAME = CONFIG.get("install_folder_name")
-SERVER_DOWNLOAD_URL = CONFIG.get("server_download_url")
-MOD_SOURCE_FOLDER_MAIN = CONFIG.get("mod_source_folder") # Original path
-BASE_INSTALL_PATH = CONFIG.get("base_install_path")
-SHORTCUT_NAME = CONFIG.get("shortcut_name")
-FILES_TO_CHECK_AND_MOVE = CONFIG.get("files_to_check_and_move")
-DEBUG_MODE = CONFIG.get("debug_mode")
-DEBUG_MOD_SOURCE_FOLDER = CONFIG.get("debug_mod_source_folder")
-
-# Determine the active MOD_SOURCE_FOLDER based on debug mode
-CURRENT_MOD_SOURCE_FOLDER = DEBUG_MOD_SOURCE_FOLDER if DEBUG_MODE else MOD_SOURCE_FOLDER_MAIN
-# --- END CONFIGURATION LOADING ---
-
+if DEBUG:
+    MOD_SOURCE_FOLDER = r"debugfolder"
 
 def get_human_readable_size(size_bytes):
     """Converts a size in bytes to a human-readable format (B, KB, MB, GB)."""
@@ -116,20 +70,26 @@ class BeamMPInstallerGUI(tk.Tk):
         self.mod_folder_exists = False
         self.initial_mod_folder_error = None # To store error message if check fails early
 
-        # Check if the active mod source folder exists and is accessible on startup
+        # Check if the mod source folder exists and is accessible on startup
         try:
-            if os.path.isdir(CURRENT_MOD_SOURCE_FOLDER):
+            if os.path.isdir(MOD_SOURCE_FOLDER):
                 self.mod_folder_exists = True
             else:
-                self.initial_mod_folder_error = f"Mod folder does not exist or is not a directory: '{CURRENT_MOD_SOURCE_FOLDER}'"
+                # Path exists but is not a directory, or path does not exist
+                self.initial_mod_folder_error = f"Mod folder does not exist or is not a directory: '{MOD_SOURCE_FOLDER}'"
         except Exception as e: # Catch any other exceptions (e.g., permission denied)
-            self.initial_mod_folder_error = f"Error accessing mod folder '{CURRENT_MOD_SOURCE_FOLDER}': {e}"
+            self.initial_mod_folder_error = f"Error accessing mod folder '{MOD_SOURCE_FOLDER}': {e}"
 
         self.create_widgets()
 
         # Display initial error if any occurred during mod folder check
         if self.initial_mod_folder_error:
-            # We already displayed a message box for config errors, so only log for mod folder if not config issue
+            messagebox.showerror(
+                "Startup Warning: Mod Folder Issue",
+                self.initial_mod_folder_error + "\n\nMod copying functionality will be disabled. "
+                "Please ensure the path is correct and the installer has permissions to access it."
+            )
+            # Also log this to the scrolled text
             self.log_message(f"Warning: {self.initial_mod_folder_error}. Mod copying disabled.", 'error')
 
 
@@ -148,11 +108,6 @@ class BeamMPInstallerGUI(tk.Tk):
         self.modded_checkbox = ttk.Checkbutton(control_frame, text="Is this a modded server?", variable=self.is_modded_var)
         self.modded_checkbox.grid(row=2, column=0, sticky="w", pady=(0, 15))
 
-        # Display debug status if enabled
-        if DEBUG_MODE:
-            ttk.Label(control_frame, text="DEBUG MODE IS ACTIVE", foreground="red", font=("Arial", 9, "bold")).grid(row=2, column=1, sticky="e", pady=(0, 15))
-
-
         # Disable checkbox if mod folder doesn't exist or had an initial error
         if not self.mod_folder_exists:
             self.modded_checkbox.config(state='disabled')
@@ -161,7 +116,7 @@ class BeamMPInstallerGUI(tk.Tk):
             # Initial warning message already handled in __init__ if there was an error.
             # If no error but just not a dir, log it here.
             if not self.initial_mod_folder_error: 
-                self.log_message(f"Warning: Mod folder not found at '{CURRENT_MOD_SOURCE_FOLDER}'. Mod copying will be disabled.", 'warning')
+                self.log_message(f"Warning: Mod folder not found at '{MOD_SOURCE_FOLDER}'. Mod copying will be disabled.", 'warning')
 
         # Install Button
         self.install_button = ttk.Button(control_frame, text="Start Installation", command=self.start_installation)
@@ -196,7 +151,7 @@ class BeamMPInstallerGUI(tk.Tk):
 
         messagebox.showwarning(
             "Mod Folder Not Found / Accessible",
-            f"The specified mod folder does not exist or could not be accessed:\n'{CURRENT_MOD_SOURCE_FOLDER}'{error_detail_message}\n\n"
+            f"The specified mod folder does not exist or could not be accessed:\n'{MOD_SOURCE_FOLDER}'{error_detail_message}\n\n"
             "Please ensure BeamNG.drive is installed, the folder path is correct, "
             "and that the installer has necessary permissions to read this directory. "
             "Then, restart the installer."
@@ -227,10 +182,6 @@ class BeamMPInstallerGUI(tk.Tk):
         self.log_text.config(state='disabled')
         self.update_progress(0, "Starting installation...")
         self.log_message("Starting BeamMP Server Installer (GUI Version)", 'info')
-        self.log_message(f"Using configuration from: {os.path.join(os.path.dirname(os.path.abspath(__file__)), CONFIG_FILE)}", 'info')
-        if DEBUG_MODE:
-            self.log_message(f"DEBUG MODE IS ACTIVE. Mod Source: {CURRENT_MOD_SOURCE_FOLDER}", 'warning')
-
 
         # 1. Create main installation folder and subfolders
         self.log_message("Creating installation directories...", 'info')
@@ -264,8 +215,8 @@ class BeamMPInstallerGUI(tk.Tk):
             self.log_message("Modded server option selected. Copying files from mod folder...", 'info')
             self.update_progress(55, "Copying mod files...") # Adjusted progress
             # Changed to copy all files, not just .zip
-            total_copied_size = self._copy_all_files_from_folder(CURRENT_MOD_SOURCE_FOLDER, self.client_mods_path) 
-            self.log_message(f"Data size of files copied: {get_human_readable_size(total_copied_size)}", 'success') # NEW: Display size
+            total_copied_size = self._copy_all_files_from_folder(MOD_SOURCE_FOLDER, self.client_mods_path) 
+            self.log_message(f"Data size of mods successfully installed: {get_human_readable_size(total_copied_size)}", 'success') # NEW: Display size
             self.update_progress(75, "Mod files copied.") # Adjusted progress
         else:
             self.log_message("Modded server option not selected or mod folder missing/inaccessible. Skipping mod copying.", 'info')
@@ -500,23 +451,22 @@ class BeamMPInstallerGUI(tk.Tk):
         return overall_success
 
     def _installation_complete(self, success):
-        """Finalizes the installation process and handles auto-closing with countdown."""
+        """Finalizes the installation process and handles auto-closing."""
         self.install_button.config(state='normal', text="Start Installation")
         self.modded_checkbox.config(state='normal')
         self.update_progress(100, "Installation Complete!")
         
         if success:
             self.log_message("\nInstallation process completed successfully!", 'success')
-            # Removed messagebox as per request.
+            messagebox.showinfo("Installation Complete", "BeamMP Server installation finished successfully!")
         else:
             self.log_message("\nInstallation process encountered errors. Please check the log for details.", 'error')
-            # Removed messagebox as per request.
-        
-        # Auto-close with countdown
-        for i in range(5, 0, -1):
-            self.log_message(f"Installer will close in {i} seconds...", 'info')
-            self.update_idletasks() # Ensure message appears before delay
-            time.sleep(1)
+            messagebox.showerror("Installation Error", "BeamMP Server installation encountered errors. Please check the log.")
+
+        # Auto-close after 1 second
+        self.log_message("Installer will close in 1 second...", 'info')
+        self.update_idletasks() # Ensure message appears before delay
+        time.sleep(1)
         self.destroy() # Close the Tkinter window
 
 
