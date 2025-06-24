@@ -18,7 +18,7 @@ except ImportError:
 
 
 # --- CONFIGURABLE VARIABLES ---
-VERSION = "v0.4.0" # Updated version for path display
+VERSION = "v0.4.5" # Updated version for current directory shortcut search
 
 # List of base directories to scan for BeamMP server installations.
 # Add or remove paths as needed where your servers might be installed.
@@ -39,7 +39,8 @@ SHORTCUT_CODE_FILE = "bsi_code.txt"
 SHORTCUT_CODE_PREFIX = "generated_bsi_shortcut_code = "
 # This regex captures the code within square brackets at the end of a shortcut name
 # Format: "NameMe - DO NOT DELETE CODE [RsiChA98xM].lnk"
-SHORTCUT_NAME_PATTERN = re.compile(r" - DO NOT DELETE CODE \[([a-zA-Z0-9]+)\]\.lnk$", re.IGNORECASE)
+# UPDATED: Added \s* to allow for optional whitespace before .lnk
+SHORTCUT_NAME_PATTERN = re.compile(r" - DO NOT DELETE CODE \[([a-zA-Z0-9]+)\]\s*\.lnk$", re.IGNORECASE)
 # --- END CONFIGURABLE VARIABLES ---
 
 
@@ -72,17 +73,24 @@ def get_human_readable_size(path):
     else:
         return f"{total_size / (1024**3):.2f} GB"
 
-def find_shortcut_by_code(code_to_find):
+def find_shortcut_by_code(code_to_find, gui_log_func):
     """
     Scans common Windows shortcut locations for a shortcut ending with ' - DO NOT DELETE CODE [CODE].lnk'
     where [CODE] matches the code_to_find.
     Returns the full path to the shortcut if found, otherwise None.
+    
+    Args:
+        code_to_find (str): The alphanumeric code to search for in shortcut names.
+        gui_log_func (callable): A function to log messages to the GUI's log area.
     """
+    gui_log_func(f"Attempting to find shortcut for code: '{code_to_find}'", 'info')
     if not WINDOWS_SHORTCUT_SUPPORT:
+        gui_log_func("Windows shortcut support (pywin32) not available. Cannot search for shortcuts.", 'warning')
         return None
 
     # Common Windows shortcut locations
     shortcut_dirs = [
+        os.getcwd(), # ADDED: Look in the current working directory (where the script is)
         os.path.expanduser("~/Desktop"), # Desktop
         os.path.expanduser("~/AppData/Roaming/Microsoft/Windows/Start Menu/Programs"), # Start Menu Programs
         os.path.expanduser("~/AppData/Local/Microsoft/Windows/Start Menu/Programs"), # Alternative Start Menu
@@ -90,20 +98,33 @@ def find_shortcut_by_code(code_to_find):
     ]
 
     for s_dir in shortcut_dirs:
+        gui_log_func(f"Searching for shortcut in directory: '{s_dir}'", 'info')
         if not os.path.isdir(s_dir):
+            gui_log_func(f"Directory not found or accessible: '{s_dir}'. Skipping.", 'warning')
             continue
         try:
             for filename in os.listdir(s_dir):
                 if filename.lower().endswith(".lnk"):
+                    gui_log_func(f"Checking shortcut file: '{filename}'", 'info')
                     match = SHORTCUT_NAME_PATTERN.search(filename)
-                    if match and match.group(1).upper() == code_to_find.upper():
-                        return os.path.join(s_dir, filename)
+                    if match:
+                        extracted_code = match.group(1)
+                        gui_log_func(f"Extracted code from shortcut name: '{extracted_code}'", 'info')
+                        if extracted_code.upper() == code_to_find.upper():
+                            found_path = os.path.join(s_dir, filename)
+                            gui_log_func(f"MATCH FOUND! Shortcut path: '{found_path}'", 'success')
+                            return found_path
+                        else:
+                            gui_log_func(f"Code mismatch: Extracted '{extracted_code}' != Expected '{code_to_find}'", 'info')
+                    else:
+                        gui_log_func(f"No code pattern matching '{SHORTCUT_NAME_PATTERN.pattern}' found in shortcut name: '{filename}'", 'info')
         except PermissionError:
-            # Silently skip directories with permission issues during shortcut search
-            pass
-        except Exception:
-            # Catch other general errors during directory listing or regex matching
-            pass
+            gui_log_func(f"Permission denied accessing directory '{s_dir}'. Skipping.", 'warning')
+        except Exception as e:
+            gui_log_func(f"An unexpected error occurred while scanning '{s_dir}' for shortcuts: {e}", 'error')
+            gui_log_func(f"Traceback:\n{traceback.format_exc()}", 'error')
+    
+    gui_log_func(f"No shortcut found matching code '{code_to_find}' in any scanned locations.", 'warning')
     return None
 
 
@@ -190,32 +211,40 @@ class BeamMPUninstallerGUI(tk.Tk):
 
     # Thread-safe GUI update methods
     def _schedule_log_message(self, message, message_type='info'):
+        """Schedules a log message to be inserted into the scrolled text widget on the main thread."""
         self.after(0, lambda: self.log_message(message, message_type))
 
     def _schedule_update_status(self, message):
+        """Schedules the status label to be updated on the main thread."""
         self.after(0, lambda: self.status_label.config(text=message))
 
     def _schedule_update_size(self, size_text):
+        """Schedules the size label to be updated on the main thread."""
         self.after(0, lambda: self.size_label.config(text=size_text))
 
     def _schedule_update_type(self, type_text):
+        """Schedules the type label to be updated on the main thread."""
         self.after(0, lambda: self.type_label.config(text=type_text))
 
     def _schedule_button_state(self, button, state):
+        """Schedules a button's state to be updated on the main thread."""
         self.after(0, lambda: button.config(state=state))
 
     def _schedule_listbox_clear(self):
+        """Schedules the listbox to be cleared on the main thread."""
         self.after(0, self.server_listbox.delete, 0, tk.END)
 
     def _schedule_listbox_insert(self, index, text):
+        """Schedules an item to be inserted into the listbox on the main thread."""
         self.after(0, lambda: self.server_listbox.insert(index, text))
 
     def _schedule_listbox_select(self, index):
+        """Schedules an item in the listbox to be selected on the main thread."""
         self.after(0, lambda: self.server_listbox.selection_set(index))
 
 
     def scan_servers(self):
-        """Initiates a server scan in a separate thread."""
+        """Initiates a server scan in a separate thread to prevent GUI freezing."""
         self._schedule_log_message("Scanning for BeamMP servers...", 'info')
         self._schedule_update_status("Scanning...")
         self._schedule_button_state(self.delete_button, 'disabled')
@@ -224,7 +253,7 @@ class BeamMPUninstallerGUI(tk.Tk):
         self.selected_server_name = None
 
         scan_thread = threading.Thread(target=self._perform_scan)
-        scan_thread.daemon = True
+        scan_thread.daemon = True # Allow the thread to exit with the main program
         scan_thread.start()
 
     def _perform_scan(self):
@@ -235,25 +264,28 @@ class BeamMPUninstallerGUI(tk.Tk):
         self.server_data = {}
 
         for base_path in BASE_SCAN_PATHS:
-            self._schedule_log_message(f"Searching in: {base_path}", 'info')
+            self._schedule_log_message(f"Searching for server installations in: '{base_path}'", 'info')
             
             # Check the base path itself if it contains the server executable
             server_exe_in_base = os.path.join(base_path, SERVER_EXE_NAME)
             if os.path.isdir(base_path) and os.path.exists(server_exe_in_base) and os.path.isfile(server_exe_in_base):
+                self._schedule_log_message(f"Found server executable directly in base path: '{base_path}'", 'info')
                 found_servers.append(base_path)
             
             # Check direct subdirectories for server installations
             try:
-                if os.path.isdir(base_path): # Ensure base_path is a directory before listing
+                if os.path.isdir(base_path): # Ensure base_path is a directory before listing its contents
                     for item_name in os.listdir(base_path):
                         full_path = os.path.join(base_path, item_name)
                         server_exe_in_subdir = os.path.join(full_path, SERVER_EXE_NAME)
                         if os.path.isdir(full_path) and os.path.exists(server_exe_in_subdir) and os.path.isfile(server_exe_in_subdir):
+                            self._schedule_log_message(f"Found server executable in subdirectory: '{full_path}'", 'info')
                             found_servers.append(full_path)
             except PermissionError:
-                self._schedule_log_message(f"Permission denied accessing '{base_path}'. Skipping.", 'warning')
+                self._schedule_log_message(f"Permission denied accessing directory '{base_path}'. Skipping.", 'warning')
             except Exception as e:
-                self._schedule_log_message(f"Error scanning '{base_path}': {e}", 'error')
+                self._schedule_log_message(f"An unexpected error occurred scanning directory '{base_path}': {e}", 'error')
+                self._schedule_log_message(f"Traceback:\n{traceback.format_exc()}", 'error')
 
         display_index = 0
         # Process unique found server paths
@@ -269,15 +301,20 @@ class BeamMPUninstallerGUI(tk.Tk):
                         for line in f:
                             if line.startswith(SHORTCUT_CODE_PREFIX):
                                 extracted_code = line.replace(SHORTCUT_CODE_PREFIX, "").strip()
+                                # Log the extracted code for debugging
+                                self._schedule_log_message(f"Read code from '{SHORTCUT_CODE_FILE}' in '{server_path}': '{extracted_code}'", 'info')
                                 # Basic validation: code should not be empty and should be alphanumeric
                                 if extracted_code and re.fullmatch(r"[a-zA-Z0-9]+", extracted_code):
                                     shortcut_code = extracted_code
                                     server_type = "Installer Managed"
                                     break
+                                else:
+                                    self._schedule_log_message(f"Invalid code format found in '{SHORTCUT_CODE_FILE}': '{extracted_code}' (Expected alphanumeric)", 'warning')
                 except Exception as e:
                     self._schedule_log_message(f"Error reading '{SHORTCUT_CODE_FILE}' in '{server_path}': {e}", 'warning')
+                    self._schedule_log_message(f"Traceback:\n{traceback.format_exc()}", 'warning')
 
-            # Updated display_name_text to include the path
+            # Updated display_name_text to include the path for clarity in the listbox
             display_name_text = f"{server_name} [{server_type}] ({server_path})"
             if server_type == "Installer Managed" and shortcut_code:
                 display_name_text = f"{server_name} [Installer Managed: {shortcut_code}] ({server_path})"
@@ -294,15 +331,16 @@ class BeamMPUninstallerGUI(tk.Tk):
 
         if not found_servers:
             self._schedule_update_status("No BeamMP servers found.")
-            self._schedule_log_message("No BeamMP servers found in scanned locations.", 'info')
+            self._schedule_log_message("No BeamMP servers found in any scanned locations.", 'info')
         else:
             self._schedule_update_status(f"Found {len(found_servers)} server(s). Select one to view details.")
             self._schedule_log_message(f"Scan complete. Found {len(found_servers)} server(s).", 'info')
 
     def on_server_select(self, event):
-        """Handles selection of a server in the listbox."""
+        """Handles selection of a server in the listbox, updating details and button state."""
         selected_indices = self.server_listbox.curselection()
         if not selected_indices:
+            # No server selected, reset GUI elements
             self.selected_server_name = None
             self._schedule_update_status("Ready.")
             self._schedule_update_size("N/A")
@@ -321,19 +359,20 @@ class BeamMPUninstallerGUI(tk.Tk):
             self._schedule_update_size(f"Calculating size for {server_info['raw_name']}...")
             self._schedule_update_type(server_type)
 
-            # Calculate size in a thread to avoid blocking GUI
+            # Calculate size in a separate thread to avoid blocking GUI
             size_calc_thread = threading.Thread(target=self._calculate_and_display_size, args=(server_path, server_info['raw_name']))
             size_calc_thread.daemon = True
             size_calc_thread.start()
 
+            # Enable/disable delete button based on installation type
             if "Manual" in server_type:
                 self.delete_button.config(text="Manual Installed Server, Cannot Delete", state='disabled')
-                self._schedule_log_message(f"Selected manual server: {server_info['raw_name']}. Deletion not supported by uninstaller.", 'warning')
+                self._schedule_log_message(f"Selected manual server: '{server_info['raw_name']}'. Deletion not supported by uninstaller for manual installations.", 'warning')
             else:
                 self.delete_button.config(text=f"Delete '{server_info['raw_name']}'", state='normal')
-                self._schedule_log_message(f"Selected installer-managed server: {server_info['raw_name']}", 'info')
+                self._schedule_log_message(f"Selected installer-managed server: '{server_info['raw_name']}'. Delete button enabled.", 'info')
         else:
-            self._schedule_update_status("Error: Server data not found.")
+            self._schedule_update_status("Error: Server data not found for selected item.")
             self._schedule_update_size("N/A")
             self._schedule_update_type("N/A")
             self._schedule_button_state(self.delete_button, 'disabled')
@@ -347,10 +386,11 @@ class BeamMPUninstallerGUI(tk.Tk):
         except Exception as e:
             self._schedule_log_message(f"Error calculating size for '{name}': {e}", 'error')
             self._schedule_update_size("Error calculating size.")
+            self._schedule_log_message(f"Traceback:\n{traceback.format_exc()}", 'error')
 
 
     def delete_selected_server_threaded(self):
-        """Initiates deletion of selected server in a separate thread."""
+        """Initiates deletion of selected server in a separate thread after user confirmation."""
         if not self.selected_server_name:
             messagebox.showwarning("No Server Selected", "Please select a server to delete from the list.")
             return
@@ -370,7 +410,7 @@ class BeamMPUninstallerGUI(tk.Tk):
                 f"\nAND its associated shortcut (e.g., 'ServerName - DO NOT DELETE CODE [{server_info['code']}]'.lnk)?"
             )
         else:
-            confirm_message += f"\n(No associated shortcut found or shortcut support unavailable.)"
+            confirm_message += f"\n(No associated shortcut code or Windows shortcut support unavailable.)"
 
         if messagebox.askyesno("Confirm Deletion", confirm_message):
             self._schedule_update_status(f"Deleting {server_info['raw_name']}...")
@@ -387,22 +427,25 @@ class BeamMPUninstallerGUI(tk.Tk):
         
         delete_success = True
         
+        # 1. Attempt to delete the server folder
         try:
             self._schedule_log_message(f"Attempting to delete server folder: '{server_path}'", 'info')
             shutil.rmtree(server_path)
             self._schedule_log_message(f"Successfully deleted server folder: '{server_path}'", 'success')
         except OSError as e:
             self._schedule_log_message(f"Error deleting folder '{server_path}': {e}", 'error')
-            self._schedule_log_message("Please ensure the folder is not in use and you have permissions.", 'error')
+            self._schedule_log_message("Please ensure the folder is not in use by other programs and you have sufficient permissions.", 'error')
             delete_success = False
         except Exception as e:
-            self._schedule_log_message(f"An unexpected error occurred deleting folder '{server_path}': {e}", 'error')
+            self._schedule_log_message(f"An unexpected error occurred while deleting folder '{server_path}': {e}", 'error')
             self._schedule_log_message(f"Traceback:\n{traceback.format_exc()}", 'error')
             delete_success = False
 
+        # 2. Attempt to delete the associated shortcut if conditions met
         if delete_success and shortcut_code and WINDOWS_SHORTCUT_SUPPORT:
             self._schedule_log_message(f"Searching for associated shortcut with code '{shortcut_code}'...", 'info')
-            shortcut_path = find_shortcut_by_code(shortcut_code)
+            # Pass the GUI's _schedule_log_message method to the find_shortcut_by_code function
+            shortcut_path = find_shortcut_by_code(shortcut_code, self._schedule_log_message)
             if shortcut_path:
                 try:
                     self._schedule_log_message(f"Found shortcut: '{shortcut_path}'. Attempting to delete.", 'info')
@@ -410,17 +453,17 @@ class BeamMPUninstallerGUI(tk.Tk):
                     self._schedule_log_message(f"Successfully deleted shortcut: '{shortcut_path}'", 'success')
                 except OSError as e:
                     self._schedule_log_message(f"Error deleting shortcut '{shortcut_path}': {e}", 'error')
-                    self._schedule_log_message("Please ensure the shortcut is not in use and you have permissions.", 'error')
+                    self._schedule_log_message("Please ensure the shortcut file is not in use and you have permissions.", 'error')
                 except Exception as e:
-                    self._schedule_log_message(f"An unexpected error occurred deleting shortcut '{shortcut_path}': {e}", 'error')
+                    self._schedule_log_message(f"An unexpected error occurred while deleting shortcut '{shortcut_path}': {e}", 'error')
                     self._schedule_log_message(f"Traceback:\n{traceback.format_exc()}", 'error')
             else:
                 self._schedule_log_message(f"No shortcut found with code '{shortcut_code}'. Skipping shortcut deletion.", 'warning')
         elif shortcut_code and not WINDOWS_SHORTCUT_SUPPORT:
-            self._schedule_log_message("Windows shortcut support (pywin32) not installed. Cannot search for/delete shortcut.", 'warning')
+            self._schedule_log_message("Windows shortcut support (pywin32) not installed. Cannot search for or delete shortcut.", 'warning')
 
 
-        # Finalization on main thread
+        # 3. Finalization on main thread to update GUI and re-scan
         self.after(0, self._finalize_deletion_gui, delete_success, raw_name)
 
     def _finalize_deletion_gui(self, success, raw_name):
@@ -429,77 +472,88 @@ class BeamMPUninstallerGUI(tk.Tk):
             messagebox.showinfo("Deletion Complete", f"Successfully deleted '{raw_name}'.")
             self._schedule_log_message(f"Deletion of '{raw_name}' complete.", 'success')
         else:
-            messagebox.showerror("Deletion Failed", f"Failed to delete '{raw_name}'. Check log for details.")
+            messagebox.showerror("Deletion Failed", f"Failed to delete '{raw_name}'. Check log for details in the GUI console.")
             self._schedule_log_message(f"Deletion of '{raw_name}' failed.", 'error')
         
-        self.scan_servers() # Re-scan to update the list and reset state
+        # Always re-scan to update the list and reset GUI state, regardless of success
+        self.scan_servers() 
 
-# --- Dummy Server Generation for Testing (COMMENTED OUT) ---
+# --- Dummy Server Generation for Testing ---
 # This function is for testing purposes only. Uncomment if you need to create dummy servers.
 # It will create dummy server folders and shortcuts based on the new naming scheme.
-# def _generate_dummy_server_folders_for_testing():
-#     """
-#     Generates a few dummy BeamMP server folders and associated ignore.txt files
-#     with unique codes for testing the uninstaller.
-#     """
-#     print("Generating dummy server folders for testing...")
-#     current_dir = os.getcwd()
+def _generate_dummy_server_folders_for_testing():
+    """
+    Generates a few dummy BeamMP server folders and associated bsi_code.txt files
+    with unique codes for testing the uninstaller. Also creates dummy shortcuts on the Desktop.
+    """
+    print("Generating dummy server folders for testing...")
+    current_dir = os.getcwd()
 
-#     dummy_servers_data = [
-#         {"name": "ManagedServer_A", "managed": True},
-#         {"name": "ManagedServer_B", "managed": True},
-#         {"name": "ManualServer_X", "managed": False},
-#         {"name": "ManualServer_Y", "managed": False}
-#     ]
+    dummy_servers_data = [
+        {"name": "ManagedServer_A", "managed": True},
+        {"name": "ManagedServer_B", "managed": True},
+        {"name": "ManualServer_X", "managed": False},
+        {"name": "ManualServer_Y", "managed": False}
+    ]
 
-#     for server_info in dummy_servers_data:
-#         folder_name = server_info["name"]
-#         server_path = os.path.join(current_dir, folder_name)
+    for server_info in dummy_servers_data:
+        folder_name = server_info["name"]
+        server_path = os.path.join(current_dir, folder_name)
         
-#         os.makedirs(server_path, exist_ok=True)
+        os.makedirs(server_path, exist_ok=True)
         
-#         # Create BeamMP-Server.exe placeholder
-#         with open(os.path.join(server_path, SERVER_EXE_NAME), 'w') as f:
-#             f.write("This is a dummy BeamMP-Server.exe")
+        # Create BeamMP-Server.exe placeholder
+        with open(os.path.join(server_path, SERVER_EXE_NAME), 'w') as f:
+            f.write("This is a dummy BeamMP-Server.exe")
         
-#         # Create a small dummy file to make folder size non-zero
-#         with open(os.path.join(server_path, "dummy_log.txt"), 'w') as f:
-#             f.write("This is a dummy log file to give the folder some size.\n" * 50)
+        # Create a small dummy file to make folder size non-zero
+        with open(os.path.join(server_path, "dummy_log.txt"), 'w') as f:
+            f.write("This is a dummy log file to give the folder some size.\n" * 50)
 
-#         # Create bsi_code.txt for managed servers
-#         if server_info["managed"]:
-#             shortcut_code = str(uuid.uuid4()).split('-')[0].upper() # Use part of UUID for unique code
-#             bsi_code_file_path = os.path.join(server_path, SHORTCUT_CODE_FILE)
-#             with open(bsi_code_file_path, 'w') as f:
-#                 f.write(f"{SHORTCUT_CODE_PREFIX}{shortcut_code}\n")
-#             print(f"Created dummy managed server: {server_path} with code {shortcut_code}")
+        # Create bsi_code.txt for managed servers
+        if server_info["managed"]:
+            # Ensure the generated code is alphanumeric only, matching the regex
+            # Generates a 10-character alphanumeric code
+            shortcut_code = str(uuid.uuid4()).replace('-', '')[:10].upper() 
+            bsi_code_file_path = os.path.join(server_path, SHORTCUT_CODE_FILE)
+            with open(bsi_code_file_path, 'w') as f:
+                f.write(f"{SHORTCUT_CODE_PREFIX}{shortcut_code}\n")
+            print(f"Created dummy managed server: {server_path} with code {shortcut_code}")
 
-#             # Optionally create a dummy shortcut (requires pywin32, for demonstration)
-#             if WINDOWS_SHORTCUT_SUPPORT:
-#                 try:
-#                     desktop_path = os.path.expanduser("~/Desktop")
-#                     # Adhering to the new shortcut name pattern
-#                     shortcut_name = f"{folder_name} - DO NOT DELETE CODE [{shortcut_code}].lnk"
-#                     shortcut_path = os.path.join(desktop_path, shortcut_name)
-#                     shell = win32com.client.Dispatch("WScript.Shell")
-#                     shortcut = shell.CreateShortCut(shortcut_path)
-#                     shortcut.Targetpath = os.path.join(server_path, SERVER_EXE_NAME)
-#                     shortcut.WorkingDirectory = server_path
-#                     shortcut.IconLocation = os.path.join(server_path, SERVER_EXE_NAME)
-#                     shortcut.Save()
-#                     print(f"  -> Created dummy shortcut on Desktop: {shortcut_path}")
-#                 except Exception as e:
-#                     print(f"  -> Warning: Could not create dummy shortcut for {folder_name} (Error: {e}). Requires pywin32.")
+            # Optionally create a dummy shortcut (requires pywin32, for demonstration)
+            if WINDOWS_SHORTCUT_SUPPORT:
+                try:
+                    desktop_path = os.path.expanduser("~/Desktop")
+                    # Adhering to the new shortcut name pattern
+                    shortcut_name = f"{folder_name} - DO NOT DELETE CODE [{shortcut_code}].lnk"
+                    shortcut_path = os.path.join(desktop_path, shortcut_name)
+                    shell = win32com.client.Dispatch("WScript.Shell")
+                    shortcut = shell.CreateShortCut(shortcut_path)
+                    shortcut.Targetpath = os.path.join(server_path, SERVER_EXE_NAME)
+                    shortcut.WorkingDirectory = server_path
+                    # Set IconLocation to the dummy server exe if it exists
+                    if os.path.exists(os.path.join(server_path, SERVER_EXE_NAME)):
+                        shortcut.IconLocation = os.path.join(server_path, SERVER_EXE_NAME)
+                    else:
+                        # Fallback for icon if server exe isn't there (though it should be for dummy)
+                        shortcut.IconLocation = "shell32.dll,0" 
+                    shortcut.Save()
+                    print(f"  -> Created dummy shortcut on Desktop: {shortcut_path}")
+                except Exception as e:
+                    print(f"  -> Warning: Could not create dummy shortcut for {folder_name}. This often requires 'pywin32' to be installed (pip install pywin32) and sufficient permissions. Error: {e}")
+                    traceback.print_exc() # Print full traceback for dummy shortcut creation errors
 
-#         else:
-#             print(f"Created dummy manual server: {server_path}")
-#     print("Dummy server generation complete.")
+        else:
+            print(f"Created dummy manual server: {server_path}")
+    print("Dummy server generation complete.")
 
 
 if __name__ == "__main__":
-    # To generate dummy server folders and shortcuts for testing, uncomment the line below:
-    # _generate_dummy_server_folders_for_testing()
+    # To generate dummy server folders and shortcuts for testing, uncomment the line below.
+    # This will create sample server folders in the same directory as this script,
+    # and managed servers will also have shortcuts on your desktop (if pywin32 is installed).
     # Remember to comment it out again when you are done testing!
+    # _generate_dummy_server_folders_for_testing()
 
     app = BeamMPUninstallerGUI()
     app.mainloop()
