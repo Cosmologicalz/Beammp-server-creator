@@ -33,7 +33,7 @@ GLOBAL_SHORTCUT_CODE = generate_random_code()
 
 # --- CONFIGURABLE VARIABLES ---
 # Current version of the installer
-VERSION = "v0.2.3" # Incrementing version for size display feature
+VERSION = "v0.2.3.2" # Incrementing version for size display feature
 # The name of the main installation folder
 INSTALL_FOLDER_NAME = "NameMe"
 # URL to download the BeamMP Server executable
@@ -516,6 +516,35 @@ class BeamMPInstallerGUI(tk.Tk):
         # Auto-close after 1 second
         self.log_message("Installer will close in 1 second...", 'info')
         self.update_idletasks() # Ensure message appears before delay
+        url = "https://keymaster.beammp.com/login"
+        webbrowser.open(url)
+        
+        messagebox.showinfo(
+            "Login to Keymaster - Create Key - Copy it into .toml file",
+            """How to get the AuthKey / Set up the AuthKey
+
+        STEP 1: Log In to BeamMP Keymaster
+        - When the website opens, click:
+        - "Login with Discord" (use the same Discord account linked to your BeamMP profile)
+        - There is no other login method; you must use Discord.
+
+        STEP 2: Create a New AuthKey
+        - Once logged in, find and click the "Create Key" button.
+        - Enter a name for your key, for example: "My BeamMP Server".
+        - Click "Create" — your key will appear ONCE only.
+
+        STEP 3: Copy the AuthKey
+        - After creating the key, copy the long string of letters and numbers shown on screen.
+        - IMPORTANT: If you close or refresh the page, you will NOT be able to see this key again!
+
+        STEP 4: Paste the AuthKey into Your Server Configuration
+        - Return to this program.
+        - When prompted, paste the copied key.
+        - The program will save it into your server’s .toml file or AuthKey file automatically.
+
+        Done! Your BeamMP server is now authorized to run using your account's key."""
+        )
+
         time.sleep(1)
         self.destroy() # Close the Tkinter window
 
